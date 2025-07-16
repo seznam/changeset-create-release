@@ -39724,46 +39724,41 @@ const glob = Object.assign(glob_, {
 });
 glob.glob = glob;
 //# sourceMappingURL=index.js.map
-;// CONCATENATED MODULE: ./src/index.mjs
+;// CONCATENATED MODULE: ./src/index.ts
 
 
 
 
 
 
-
-
-function escapeRegex(string) {
-	return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
+/**
+ * Extracts part of the changelog from the changelog file
+ * for a specific version.
+ */
 function extractChangelogForVersion(changelogPath, version) {
-	const content = (0,external_node_fs_namespaceObject.readFileSync)(changelogPath, "utf8");
-	const lines = content.split("\n");
-
-	let inVersionSection = false;
-	const releaseNotes = [];
-
-	for (const line of lines) {
-		// Look for version header (## 1.0.0 or ## [1.0.0])
-		if (line.match(new RegExp(`^##\\s+\\[?${escapeRegex(version)}\\]?`))) {
-			inVersionSection = true;
-			continue;
-		}
-
-		// Stop when we hit the next version or end
-		if (inVersionSection && line.match(/^##\s+/)) {
-			break;
-		}
-
-		if (inVersionSection) {
-			releaseNotes.push(line);
-		}
-	}
-
-	return releaseNotes.join("\n").trim() || `Release ${version}`;
+    const content = (0,external_node_fs_namespaceObject.readFileSync)(changelogPath, 'utf8');
+    const lines = content.split('\n');
+    let inVersionSection = false;
+    const releaseNotes = [];
+    const escapeRegex = (string) => {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    };
+    for (const line of lines) {
+        // Look for version header (## 1.0.0 or ## [1.0.0])
+        if (line.match(new RegExp(`^##\\s+\\[?${escapeRegex(version)}\\]?`))) {
+            inVersionSection = true;
+            continue;
+        }
+        // Stop when we hit the next version or end
+        if (inVersionSection && line.match(/^##\s+/)) {
+            break;
+        }
+        if (inVersionSection) {
+            releaseNotes.push(line);
+        }
+    }
+    return releaseNotes.join('\n').trim() || `Release ${version}`;
 }
-
 /**
  * Script to create GitHub releases for tagged packages.
  *
@@ -39771,121 +39766,116 @@ function extractChangelogForVersion(changelogPath, version) {
  * It extracts tags from the current commit and creates releases for each tagged package.
  */
 async function main() {
-	try {
-		// Get tags for the current commit first
-		const currentCommit = (0,external_node_child_process_namespaceObject.execSync)("git rev-parse HEAD", {
-			encoding: "utf8",
-		}).trim();
-		const tagsOutput = (0,external_node_child_process_namespaceObject.execSync)(`git tag --points-at ${currentCommit}`, {
-			encoding: "utf8",
-		}).trim();
-
-		if (!tagsOutput) {
-			core.info("No tags found for current commit - nothing to do.");
-			return;
-		}
-
-		const tags = tagsOutput.split("\n").filter((tag) => tag.length > 0);
-		core.info(`Found tags: ${tags}`);
-
-		const token = process.env.GITHUB_TOKEN;
-		if (!token) {
-			core.setFailed(
-				"GITHUB_TOKEN is not set. This script must be run in a GitHub Actions environment with access to the token.",
-			);
-			return;
-		}
-
-		const octokit = (0,github.getOctokit)(token);
-
-		core.info("Creating GitHub releases...");
-
-		// Read root package.json to get workspace patterns
-		const rootPackageJson = JSON.parse((0,external_node_fs_namespaceObject.readFileSync)("package.json", "utf8"));
-		const workspaces = rootPackageJson.workspaces || [];
-
-		core.info(`Workspace patterns: ${workspaces}`);
-
-		// Find all package.json files in workspaces
-		const packagePaths = [];
-
-		for (const pattern of workspaces) {
-			const packageJsonPattern = (0,external_node_path_namespaceObject.join)(pattern, "package.json");
-			const matches = globSync(packageJsonPattern);
-			packagePaths.push(...matches);
-		}
-
-		core.info(`Found packages: ${packagePaths}`);
-
-		// Parse tags and match with packages
-		for (const tag of tags) {
-			core.info(`\nProcessing tag: ${tag}`);
-
-			// Parse tag format: package-name@version
-			const match = tag.match(/^(.+)@(.+)$/);
-
-			if (!match) {
-				core.info(`Skipping tag ${tag} - doesn't match package@version format`);
-				continue;
-			}
-
-			const [, packageName, version] = match;
-			core.info(`Parsed: package=${packageName}, version=${version}`);
-
-			// Find matching package
-			const matchingPackage = packagePaths.find((packagePath) => {
-				const pkg = JSON.parse((0,external_node_fs_namespaceObject.readFileSync)(packagePath, "utf8"));
-				return pkg.name === packageName && pkg.version === version;
-			});
-
-			if (!matchingPackage) {
-				core.warning(`No matching package found for ${packageName}@${version}`);
-				continue;
-			}
-
-			core.info(`Found matching package: ${matchingPackage}`);
-
-			// Extract changelog for this version
-			const packageDir = (0,external_node_path_namespaceObject.dirname)(matchingPackage);
-			const changelogPath = (0,external_node_path_namespaceObject.join)(packageDir, "CHANGELOG.md");
-
-			let releaseNotes = "";
-			if ((0,external_node_fs_namespaceObject.existsSync)(changelogPath)) {
-				releaseNotes = extractChangelogForVersion(changelogPath, version);
-				core.info(`Extracted changelog: ${releaseNotes.substring(0, 100)}...`);
-			} else {
-				core.info("No CHANGELOG.md found, using default release notes");
-				releaseNotes = `Release ${version} of ${packageName}`;
-			}
-
-			// Create GitHub release
-			try {
-				const release = await octokit.rest.repos.createRelease({
-					owner: github.context.repo.owner,
-					repo: github.context.repo.repo,
-					tag_name: tag,
-					name: `${packageName}@${version}`,
-					body: releaseNotes,
-					draft: false,
-					prerelease: /-(alpha|beta|rc|pre)/i.test(version),
-				});
-
-				core.info(`✅ Created release for ${tag}: ${release.data.html_url}`);
-			} catch (error) {
-				if (error.status === 422 && error.message.includes("already_exists")) {
-					core.warning(`⚠️  Release for ${tag} already exists`);
-				} else {
-					core.error(
-						`❌ Failed to create release for ${tag}: ${error.message}`,
-					);
-				}
-			}
-		}
-	} catch (error) {
-		core.setFailed(`Error creating releases: ${error.message}`);
-	}
+    try {
+        // Get tags for the current commit first
+        const currentCommit = (0,external_node_child_process_namespaceObject.execSync)('git rev-parse HEAD', {
+            encoding: 'utf8',
+        }).trim();
+        const tagsOutput = (0,external_node_child_process_namespaceObject.execSync)(`git tag --points-at ${currentCommit}`, {
+            encoding: 'utf8',
+        }).trim();
+        if (!tagsOutput) {
+            core.info('No tags found for current commit - nothing to do.');
+            return;
+        }
+        const tags = tagsOutput.split('\n').filter((tag) => tag.length > 0);
+        core.info(`Found tags: ${tags}`);
+        const token = core.getInput('token', { required: true });
+        if (!token) {
+            core.setFailed('GITHUB_TOKEN is not set. This script must be run in a GitHub Actions environment with access to the token.');
+            return;
+        }
+        const octokit = (0,github.getOctokit)(token);
+        core.info('Creating GitHub releases...');
+        // Read root package.json to get workspace patterns
+        const rootPackageJson = JSON.parse((0,external_node_fs_namespaceObject.readFileSync)('package.json', 'utf8'));
+        const workspaces = rootPackageJson.workspaces || [];
+        core.info(`Workspace patterns: ${workspaces}`);
+        // Find all package.json files in workspaces
+        const packagePaths = [];
+        for (const pattern of workspaces) {
+            const packageJsonPattern = (0,external_node_path_namespaceObject.join)(pattern, 'package.json');
+            const matches = globSync(packageJsonPattern);
+            packagePaths.push(...matches);
+        }
+        core.info(`Found packages: ${packagePaths}`);
+        // Parse tags and match with packages
+        for (const tag of tags) {
+            core.info(`\nProcessing tag: ${tag}`);
+            // Parse tag format: package-name@version
+            const match = tag.match(/^(.+)@(.+)$/);
+            if (!match) {
+                core.info(`Skipping tag ${tag} - doesn't match package@version format`);
+                continue;
+            }
+            const [, packageName, version] = match;
+            core.info(`Parsed: package=${packageName}, version=${version}`);
+            if (!version) {
+                core.info(`Skipping tag ${tag} - no version found`);
+                continue;
+            }
+            if (!packageName) {
+                core.info(`Skipping tag ${tag} - no package name found`);
+                continue;
+            }
+            // Find matching package
+            const matchingPackage = packagePaths.find((packagePath) => {
+                const pkg = JSON.parse((0,external_node_fs_namespaceObject.readFileSync)(packagePath, 'utf8'));
+                return pkg.name === packageName && pkg.version === version;
+            });
+            if (!matchingPackage) {
+                core.warning(`No matching package found for ${packageName}@${version}`);
+                continue;
+            }
+            core.info(`Found matching package: ${matchingPackage}`);
+            // Extract changelog for this version
+            const packageDir = (0,external_node_path_namespaceObject.dirname)(matchingPackage);
+            const changelogPath = (0,external_node_path_namespaceObject.join)(packageDir, 'CHANGELOG.md');
+            let releaseNotes = '';
+            if ((0,external_node_fs_namespaceObject.existsSync)(changelogPath)) {
+                releaseNotes = extractChangelogForVersion(changelogPath, version);
+                core.info(`Extracted changelog: ${releaseNotes.substring(0, 100)}...`);
+            }
+            else {
+                core.info('No CHANGELOG.md found, using default release notes');
+                releaseNotes = `Release ${version} of ${packageName}`;
+            }
+            // Create GitHub release
+            try {
+                const release = await octokit.rest.repos.createRelease({
+                    owner: github.context.repo.owner,
+                    repo: github.context.repo.repo,
+                    tag_name: tag,
+                    name: `${packageName}@${version}`,
+                    body: releaseNotes,
+                    draft: false,
+                    prerelease: /-(alpha|beta|rc|pre)/i.test(version),
+                });
+                core.info(`✅ Created release for ${tag}: ${release.data.html_url}`);
+            }
+            catch (error) {
+                if (error instanceof Error) {
+                    if ('status' in error &&
+                        error.status === 422 &&
+                        error.message.includes('already_exists')) {
+                        core.warning(`⚠️  Release for ${tag} already exists`);
+                    }
+                    else {
+                        core.error(`❌ Failed to create release for ${tag}: ${error.message}`);
+                    }
+                }
+            }
+        }
+    }
+    catch (error) {
+        if (error instanceof Error) {
+            core.setFailed(`Error creating releases: ${error.message}`);
+        }
+        else {
+            core.setFailed(`Error creating releases: ${error}`);
+        }
+    }
 }
-
 main();
 
 var __webpack_exports__main = __webpack_exports__.i;

@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 
-import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import * as core from "@actions/core";
-import { context, getOctokit } from "@actions/github";
-import { globSync } from "glob";
+import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import * as core from '@actions/core';
+import { context, getOctokit } from '@actions/github';
+import { globSync } from 'glob';
 
-function escapeRegex(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function extractChangelogForVersion(changelogPath, version) {
-  const content = readFileSync(changelogPath, "utf8");
-  const lines = content.split("\n");
+/**
+ * Extracts part of the changelog from the changelog file
+ * for a specific version.
+ */
+function extractChangelogForVersion(changelogPath: string, version: string) {
+  const content = readFileSync(changelogPath, 'utf8');
+  const lines = content.split('\n');
 
   let inVersionSection = false;
   const releaseNotes = [];
+
+  const escapeRegex = (string: string) => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  };
 
   for (const line of lines) {
     // Look for version header (## 1.0.0 or ## [1.0.0])
@@ -35,7 +39,7 @@ function extractChangelogForVersion(changelogPath, version) {
     }
   }
 
-  return releaseNotes.join("\n").trim() || `Release ${version}`;
+  return releaseNotes.join('\n').trim() || `Release ${version}`;
 }
 
 /**
@@ -47,35 +51,39 @@ function extractChangelogForVersion(changelogPath, version) {
 export async function main() {
   try {
     // Get tags for the current commit first
-    const currentCommit = execSync("git rev-parse HEAD", {
-      encoding: "utf8",
+    const currentCommit = execSync('git rev-parse HEAD', {
+      encoding: 'utf8',
     }).trim();
-    const tagsOutput = execSync(`git tag --points-at ${currentCommit}`, {
-      encoding: "utf8",
-    }).trim();
+    const tagsOutput: string = execSync(
+      `git tag --points-at ${currentCommit}`,
+      {
+        encoding: 'utf8',
+      },
+    ).trim();
 
     if (!tagsOutput) {
-      core.info("No tags found for current commit - nothing to do.");
+      core.info('No tags found for current commit - nothing to do.');
       return;
     }
 
-    const tags = tagsOutput.split("\n").filter((tag) => tag.length > 0);
+    const tags = tagsOutput.split('\n').filter((tag) => tag.length > 0);
     core.info(`Found tags: ${tags}`);
 
-    const token = process.env.GITHUB_TOKEN;
+    const token = core.getInput('token', { required: true });
+
     if (!token) {
       core.setFailed(
-        "GITHUB_TOKEN is not set. This script must be run in a GitHub Actions environment with access to the token.",
+        'GITHUB_TOKEN is not set. This script must be run in a GitHub Actions environment with access to the token.',
       );
       return;
     }
 
     const octokit = getOctokit(token);
 
-    core.info("Creating GitHub releases...");
+    core.info('Creating GitHub releases...');
 
     // Read root package.json to get workspace patterns
-    const rootPackageJson = JSON.parse(readFileSync("package.json", "utf8"));
+    const rootPackageJson = JSON.parse(readFileSync('package.json', 'utf8'));
     const workspaces = rootPackageJson.workspaces || [];
 
     core.info(`Workspace patterns: ${workspaces}`);
@@ -84,7 +92,7 @@ export async function main() {
     const packagePaths = [];
 
     for (const pattern of workspaces) {
-      const packageJsonPattern = join(pattern, "package.json");
+      const packageJsonPattern = join(pattern, 'package.json');
       const matches = globSync(packageJsonPattern);
       packagePaths.push(...matches);
     }
@@ -106,9 +114,19 @@ export async function main() {
       const [, packageName, version] = match;
       core.info(`Parsed: package=${packageName}, version=${version}`);
 
+      if (!version) {
+        core.info(`Skipping tag ${tag} - no version found`);
+        continue;
+      }
+
+      if (!packageName) {
+        core.info(`Skipping tag ${tag} - no package name found`);
+        continue;
+      }
+
       // Find matching package
       const matchingPackage = packagePaths.find((packagePath) => {
-        const pkg = JSON.parse(readFileSync(packagePath, "utf8"));
+        const pkg = JSON.parse(readFileSync(packagePath, 'utf8'));
         return pkg.name === packageName && pkg.version === version;
       });
 
@@ -121,14 +139,14 @@ export async function main() {
 
       // Extract changelog for this version
       const packageDir = dirname(matchingPackage);
-      const changelogPath = join(packageDir, "CHANGELOG.md");
+      const changelogPath = join(packageDir, 'CHANGELOG.md');
 
-      let releaseNotes = "";
+      let releaseNotes = '';
       if (existsSync(changelogPath)) {
         releaseNotes = extractChangelogForVersion(changelogPath, version);
         core.info(`Extracted changelog: ${releaseNotes.substring(0, 100)}...`);
       } else {
-        core.info("No CHANGELOG.md found, using default release notes");
+        core.info('No CHANGELOG.md found, using default release notes');
         releaseNotes = `Release ${version} of ${packageName}`;
       }
 
@@ -146,17 +164,27 @@ export async function main() {
 
         core.info(`✅ Created release for ${tag}: ${release.data.html_url}`);
       } catch (error) {
-        if (error.status === 422 && error.message.includes("already_exists")) {
-          core.warning(`⚠️  Release for ${tag} already exists`);
-        } else {
-          core.error(
-            `❌ Failed to create release for ${tag}: ${error.message}`,
-          );
+        if (error instanceof Error) {
+          if (
+            'status' in error &&
+            error.status === 422 &&
+            error.message.includes('already_exists')
+          ) {
+            core.warning(`⚠️  Release for ${tag} already exists`);
+          } else {
+            core.error(
+              `❌ Failed to create release for ${tag}: ${error.message}`,
+            );
+          }
         }
       }
     }
   } catch (error) {
-    core.setFailed(`Error creating releases: ${error.message}`);
+    if (error instanceof Error) {
+      core.setFailed(`Error creating releases: ${error.message}`);
+    } else {
+      core.setFailed(`Error creating releases: ${error}`);
+    }
   }
 }
 
